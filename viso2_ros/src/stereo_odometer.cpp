@@ -9,6 +9,9 @@
 
 #include <viso2_ros/VisoInfo.h>
 
+#include <viso2_ros/StereoConfig.h>
+#include <dynamic_reconfigure/server.h>
+
 #include "stereo_processor.h"
 #include "odometer_base.h"
 #include "odometry_params.h"
@@ -51,6 +54,8 @@ private:
   boost::shared_ptr<VisualOdometryStereo> visual_odometer_;
   VisualOdometryStereo::parameters visual_odometer_params_;
 
+  dynamic_reconfigure::Server<StereoConfig> params_server_;
+
   ros::Publisher point_cloud_pub_;
   ros::Publisher info_pub_;
 
@@ -73,7 +78,10 @@ public:
   {
     // Read local parameters
     ros::NodeHandle local_nh("~");
-    odometry_params::loadParams(local_nh, visual_odometer_params_);
+
+    // NOTE This has been supersceded by dynamic_reconfigure, for better or worse...
+    // Calling params_server.setCallback populates the parameters now
+    // odometry_params::loadParams(local_nh, visual_odometer_params_);
 
     local_nh.param("ref_frame_change_method", ref_frame_change_method_, 0);
     local_nh.param("ref_frame_motion_threshold", ref_frame_motion_threshold_, 5.0);
@@ -83,9 +91,38 @@ public:
     info_pub_ = local_nh.advertise<VisoInfo>("info", 1);
 
     reference_motion_ = Matrix::eye(4);
+
+    dynamic_reconfigure::Server<StereoConfig>::CallbackType cb;
+    cb = boost::bind(&StereoOdometer::reconfigureCallback, this, _1, _2);
+    params_server_.setCallback(cb);
   }
 
 protected:
+
+  void reconfigureCallback( StereoConfig& config, uint32_t level )
+  {
+    // TODO Use level to determine whether we need to reboot the entire odometer or not
+    visual_odometer_.reset();
+
+    visual_odometer_params_.match.nms_n = config.nms_n;
+    visual_odometer_params_.match.nms_tau = config.nms_tau;
+    visual_odometer_params_.match.match_binsize = config.match_binsize;
+    visual_odometer_params_.match.match_radius = config.match_radius;
+    visual_odometer_params_.match.match_disp_tolerance = config.match_disp_tolerance;
+    visual_odometer_params_.match.outlier_disp_tolerance = config.outlier_disp_tolerance;
+    visual_odometer_params_.match.outlier_flow_tolerance = config.outlier_flow_tolerance;
+    visual_odometer_params_.match.multi_stage = config.use_multi_stage;
+    visual_odometer_params_.match.half_resolution = config.use_half_resolution;
+    visual_odometer_params_.match.refinement = config.use_refinement;
+
+    visual_odometer_params_.bucket.max_features = config.max_features;
+    visual_odometer_params_.bucket.bucket_width = config.bucket_width;
+    visual_odometer_params_.bucket.bucket_height = config.bucket_height;
+
+    visual_odometer_params_.ransac_iters = config.ransac_iters;
+    visual_odometer_params_.inlier_threshold = config.inlier_threshold;
+    visual_odometer_params_.reweighting = config.reweighting;
+  }
 
   void initOdometer(
       const sensor_msgs::CameraInfoConstPtr& l_info_msg,
@@ -107,7 +144,10 @@ protected:
     visual_odometer_params_.calib.f   = model.left().fx();
 
     visual_odometer_.reset(new VisualOdometryStereo(visual_odometer_params_));
-    if (l_info_msg->header.frame_id != "") setSensorFrameId(l_info_msg->header.frame_id);
+    if (l_info_msg->header.frame_id != "") 
+    {
+      setSensorFrameId(l_info_msg->header.frame_id);
+    }
     ROS_INFO_STREAM("Initialized libviso2 stereo odometry "
                     "with the following parameters:" << std::endl <<
                     visual_odometer_params_ <<

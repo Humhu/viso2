@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros 
   std_srvs
   message_generation
+  dynamic_reconfigure
 )
 
 find_package(OpenCV REQUIRED)
@@ -24,6 +25,12 @@ add_message_files( DIRECTORY msg FILES VisoInfo.msg)
 generate_messages(
   DEPENDENCIES 
     std_msgs
+)
+
+# add dynamic reconfigure API
+# TODO Monocular config
+generate_dynamic_reconfigure_options(
+  cfg/viso2_stereo.cfg
 )
 
 catkin_package()
@@ -48,5 +55,8 @@ include_directories(${Boost_INCLUDE_DIRS})
 target_link_libraries(stereo_odometer ${Boost_LIBRARIES} ${catkin_LIBRARIES})
 target_link_libraries(mono_odometer ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
 
+
+# make sure configure headers are built before any node using them
+add_dependencies(stereo_odometer ${PROJECT_NAME}_gencfg)
 
 

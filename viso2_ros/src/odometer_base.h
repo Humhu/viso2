@@ -25,6 +25,7 @@ private:
   // publisher
   ros::Publisher odom_pub_;
   ros::Publisher pose_pub_;
+  ros::Publisher twist_pub_;
 
   ros::ServiceServer reset_service_;
 
@@ -55,6 +56,7 @@ public:
 
     local_nh.param("odom_frame_id", odom_frame_id_, std::string("/odom"));
     local_nh.param("base_link_frame_id", base_link_frame_id_, std::string("/base_link"));
+    // NOTE This gets overridden on odometer initialization! Why have it at all?
     local_nh.param("sensor_frame_id", sensor_frame_id_, std::string("/camera"));
     local_nh.param("publish_tf", publish_tf_, true);
     local_nh.param("invert_tf", invert_tf_, false);
@@ -68,6 +70,7 @@ public:
     // advertise
     odom_pub_ = local_nh.advertise<nav_msgs::Odometry>("odometry", 1);
     pose_pub_ = local_nh.advertise<geometry_msgs::PoseStamped>("pose", 1);
+    twist_pub_ = local_nh.advertise<geometry_msgs::TwistStamped>("twist", 1);
 
     reset_service_ = local_nh.advertiseService("reset_pose", &OdometerBase::resetPose, this);
 
@@ -170,8 +173,13 @@ protected:
     pose_msg.header.stamp = odometry_msg.header.stamp;
     pose_msg.header.frame_id = odometry_msg.header.frame_id;
     pose_msg.pose = odometry_msg.pose.pose;
-
     pose_pub_.publish(pose_msg);
+
+    geometry_msgs::TwistStamped twist_msg;
+    twist_msg.header.stamp = odometry_msg.header.stamp;
+    twist_msg.header.frame_id = odometry_msg.child_frame_id;
+    twist_msg.twist = odometry_msg.twist.twist;
+    twist_pub_.publish(twist_msg);
 
     if (publish_tf_)
     {
