@@ -11,6 +11,7 @@
 
 #include <viso2_ros/StereoConfig.h>
 #include <dynamic_reconfigure/server.h>
+#include <image_transport/image_transport.h>
 
 #include "stereo_processor.h"
 #include "odometer_base.h"
@@ -18,6 +19,8 @@
 
 // to remove after debugging
 #include <opencv2/highgui/highgui.hpp>
+
+#include <sstream>
 
 namespace viso2_ros
 {
@@ -68,6 +71,8 @@ private:
   int ref_frame_inlier_threshold_; // method 2. Change the reference frame if the number of inliers is low
   Matrix reference_motion_;
 
+  image_transport::Publisher vis_pub_;
+
 public:
 
   typedef pcl::PointCloud<pcl::PointXYZRGB> PointCloud;
@@ -78,6 +83,10 @@ public:
   {
     // Read local parameters
     ros::NodeHandle local_nh("~");
+    
+    ros::NodeHandle nh;
+    image_transport::ImageTransport it(nh);
+    vis_pub_ = it.advertise("debug", 1);
 
     // NOTE This has been supersceded by dynamic_reconfigure, for better or worse...
     // Calling params_server.setCallback populates the parameters now
@@ -240,11 +249,17 @@ protected:
 
         integrateAndPublish(delta_transform, l_image_msg->header.stamp);
 
-        if (point_cloud_pub_.getNumSubscribers() > 0)
+        if(point_cloud_pub_.getNumSubscribers() > 0)
         {
           computeAndPublishPointCloud(l_info_msg, l_image_msg, r_info_msg,
                                       visual_odometer_->getMatches(),
                                       visual_odometer_->getInlierIndices());
+        }
+        if(vis_pub_.getNumSubscribers() > 0)
+        {
+          publishMatches(l_cv_ptr->image, r_cv_ptr->image,
+                         visual_odometer_->getMatches(),
+                         visual_odometer_->getInlierIndices());
         }
       }
       else
@@ -318,6 +333,32 @@ protected:
     return total_flow / matches.size();
   }
 
+  void publishMatches(
+    const cv::Mat& leftImg, const cv::Mat& rightImg,
+    const std::vector<Matcher::p_match>& matches,
+    const std::vector<int32_t>& inlier_indices)
+  {
+    unsigned int width = leftImg.cols;
+    unsigned int height = leftImg.rows;
+    cv::Mat canvas(height, 2*width, CV_8UC3);
+    cv::Mat visLeft(canvas, cv::Rect(0, 0, width, height));
+    cv::Mat visRight(canvas, cv::Rect(width, 0, width, height));
+    cv::cvtColor(leftImg, visLeft, CV_GRAY2BGR);
+    cv::cvtColor(rightImg, visRight, CV_GRAY2BGR);
+
+    for( unsigned int i = 0; i < inlier_indices.size(); ++i )
+    {
+      const Matcher::p_match& match = matches[inlier_indices[i]];
+      cv::Point2f leftCenter(match.u1c, match.v1c);
+      cv::Point2f rightCenter(match.u2c, match.v2c);      
+      cv::circle(visLeft, leftCenter, 3, cv::Scalar(0, 255, 0));
+      cv::circle(visRight, rightCenter, 3, cv::Scalar(0, 255, 0));
+    }
+
+    cv_bridge::CvImage vimg(std_msgs::Header(), "rgb8", canvas);
+    vis_pub_.publish(vimg.toImageMsg());
+  }
+
   void computeAndPublishPointCloud(
       const sensor_msgs::CameraInfoConstPtr& l_info_msg,
       const sensor_msgs::ImageConstPtr& l_image_msg,
@@ -339,6 +380,8 @@ protected:
       point_cloud->height = inlier_indices.size();
       point_cloud->points.resize(inlier_indices.size());
 
+      // std::stringstream ss;
+      // ss << "points: ";
       for (size_t i = 0; i < inlier_indices.size(); ++i)
       {
         const Matcher::p_match& match = matches[inlier_indices[i]];
@@ -351,11 +394,13 @@ protected:
         point_cloud->points[i].x = point.x;
         point_cloud->points[i].y = point.y;
         point_cloud->points[i].z = point.z;
+        // ss << "(" << point.x << ", " << point.y << ", " << point.z << "), ";
         cv::Vec3b color = cv_ptr->image.at<cv::Vec3b>(left_uv.y,left_uv.x);
         point_cloud->points[i].r = color[0];
         point_cloud->points[i].g = color[1];
         point_cloud->points[i].b = color[2];
       }
+      // ROS_INFO_STREAM(ss.str());
       ROS_DEBUG("Publishing point cloud with %zu points.", point_cloud->size());
       point_cloud_pub_.publish(point_cloud);
     }
